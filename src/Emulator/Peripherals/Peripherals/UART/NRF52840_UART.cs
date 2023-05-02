@@ -144,6 +144,10 @@ namespace Antmicro.Renode.Peripherals.UART
                     .WithFlag(0, FieldMode.Write, writeCallback: (_, value) => { if(value) { StopTx(); }}, name: "TASKS_STOPTX")
                     .WithReservedBits(1, 31)
                 },
+                {(long)Registers.FlushRx, new DoubleWordRegister(this)
+                    .WithFlag(0, FieldMode.Write, writeCallback: (_, value) => { if(value) { FlushRx(); }}, name: "TASKS_FLUSHRX")
+                    .WithReservedBits(1, 31)
+                },
                 {(long)Registers.RxDReady, GetEventRegister(Interrupts.ReceiveReady, "EVENTS_RXDRDY")
                 },
                 {(long)Registers.TxDReady, GetEventRegister(Interrupts.TransmitReady, "EVENTS_TXDRDY")
@@ -250,7 +254,7 @@ namespace Antmicro.Renode.Peripherals.UART
                 // these are registers only for eDMA version of the UART
                 dict.Add((long)Registers.EndRx, GetEventRegister(Interrupts.EndReceive, "EVENTS_ENDRX"));
 
-                dict.Add((long)Registers.EndTx, GetEventRegister(Interrupts.EndTransmit, "EVENTS_ENDRX"));
+                dict.Add((long)Registers.EndTx, GetEventRegister(Interrupts.EndTransmit, "EVENTS_ENDTX"));
 
                 dict.Add((long)Registers.RxTimeout, GetEventRegister(Interrupts.ReceiveTimeout, "EVENTS_RXTO"));
 
@@ -361,6 +365,23 @@ namespace Antmicro.Renode.Peripherals.UART
         {
             // the remark from StopRx applies here as well, but we assume that StartTx is always finished at once
             interruptManager.SetInterrupt(Interrupts.TransmitStopped);
+        }
+
+        private void FlushRx()
+        {
+            lock(interruptManager)
+            {
+                while(TryGetCharacter(out var character))
+                { // empty the FIFO into the RAM buffer
+                    this.Machine.SystemBus.WriteByte(currentRxPointer, character);
+                    rxAmount.Value++;
+                    currentRxPointer++;
+                }
+
+                // Hard to find this info in the datasheet, but it's in the nrfx driver!
+                // The flushrx task end with generating ENDRX event.
+                interruptManager.SetInterrupt(Interrupts.EndReceive);
+            }
         }
 
         private uint GetBaudRate(uint value)
